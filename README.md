@@ -80,40 +80,6 @@ src/
 - `--max_new_tokens`: 最大生成长度
 - `--temperature`: 温度参数
 
-## 示例
-
-### 快速测试（小数据集）
-```bash
-# SFT
-python scripts/train_sft.py \
-    --max_samples 10 \
-    --num_epochs 1
-
-# RL
-python scripts/train_gsm8k_agent.py \
-    --max_samples 5 \
-    --samples_per_prompt 2 \
-    --max_new_tokens 128 \
-    --total_epochs 1
-
-# 测试
-python scripts/test_interactive.py \
-    --model_path ./outputs/Qwen2.5-0.5B/rl/epoch_1
-```
-
-### 正式训练（全数据集）
-```bash
-# SFT
-python scripts/train_sft.py \
-    --num_epochs 3
-
-# RL
-python scripts/train_gsm8k_agent.py \
-    --samples_per_prompt 4 \
-    --max_new_tokens 256 \
-    --total_epochs 5
-```
-
 ## License
 
 MIT
