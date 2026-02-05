@@ -10,6 +10,7 @@ import asyncio
 import sys
 import logging
 from pathlib import Path
+from typing import Any
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -19,8 +20,8 @@ import yaml
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from src.core.types import NamedResources
-from src.store.memory import InMemoryStore
-from src.runner.agent_runner import AgentRunner
+from src.store.memory import InMemoryLightningStore
+from src.runner.agent import LitAgentRunner
 from src.agents.gsm8k_lit import GSM8KLitAgent
 from src.algorithm.grpo import GRPOAlgorithm
 from src.datasets.gsm8k import GSM8KDataset
@@ -29,13 +30,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def load_config(config_path: str) -> dict:
+def get_device(device_str: str) -> str:
+    """Get device string, supports 'auto' detection"""
+    if device_str == "auto":
+        if torch.backends.mps.is_available():
+            return "mps"
+        elif torch.cuda.is_available():
+            return "cuda"
+        else:
+            return "cpu"
+    return device_str
+
+
+def load_config(config_path: str) -> dict[str, Any]:
     """Load YAML config file"""
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
 
-def ensure_numeric(config: dict, keys: list):
+def ensure_numeric(config: dict[str, Any], keys: list[str]) -> dict[str, Any]:
     for key in keys:
         if key in config:
             val = config[key]
@@ -46,15 +59,16 @@ def ensure_numeric(config: dict, keys: list):
     return config
 
 
-async def run_sft(config: dict, trainer_config: dict, tokenizer):
+async def run_sft(config: dict[str, Any], trainer_config: dict[str, Any], tokenizer: Any):
     """Run SFT training mode"""
     logger.info("=" * 50)
     logger.info("Running SFT Training")
     logger.info("=" * 50)
 
-    # Use simple PyTorch training loop
-    device = config.get("device", "mps")
+    device = config.get("device", "cpu")
     model_path = config.get("model_path")
+    if not isinstance(model_path, str) or not model_path:
+        raise ValueError("config.model_path must be a non-empty string")
 
     dtype = torch.float16 if device in ["mps", "cuda"] else torch.float32
     model = AutoModelForCausalLM.from_pretrained(
@@ -129,16 +143,18 @@ async def run_sft(config: dict, trainer_config: dict, tokenizer):
     tokenizer.save_pretrained(output_path)
 
 
-async def run_grpo(config: dict, trainer_config: dict):
+async def run_grpo(config: dict[str, Any], trainer_config: dict[str, Any]):
     """Run GRPO training mode"""
     logger.info("=" * 50)
     logger.info("Running GRPO Training")
     logger.info("=" * 50)
 
-    device = config.get("device", "mps")
+    device = config.get("device", "cpu")
     model_path = config.get("model_path")
+    if not isinstance(model_path, str) or not model_path:
+        raise ValueError("config.model_path must be a non-empty string")
 
-    store = InMemoryStore()
+    store = InMemoryLightningStore()
 
     # Load model and tokenizer
     dtype = torch.float16 if device in ["mps", "cuda"] else torch.float32
@@ -162,7 +178,9 @@ async def run_grpo(config: dict, trainer_config: dict):
         max_turns=config.get("max_turns", 2),
         use_server=False
     )
-    runner = AgentRunner("worker-1", store, agent)
+    runner = LitAgentRunner(tracer=None)
+    runner.init(agent=agent)
+    runner.init_worker(worker_id="worker-1", store=store)
     runner_task = asyncio.create_task(runner.start())
 
     algorithm = GRPOAlgorithm(store, trainer_config, tokenizer)
@@ -212,11 +230,19 @@ def main():
                     "num_epochs", "max_samples", "samples_per_prompt", "max_turns", "max_tokens"]
     config = ensure_numeric(config, numeric_keys)
 
-    logger.info(f"Loading model from {config.get('model_path')}")
-    tokenizer = AutoTokenizer.from_pretrained(config.get("model_path"), trust_remote_code=True)
+    # Resolve device
+    device = get_device(config.get("device", "cpu"))
+    config["device"] = device
+    logger.info(f"Using device: {device}")
+
+    model_path = config.get("model_path")
+    if not isinstance(model_path, str) or not model_path:
+        raise ValueError("config.model_path must be a non-empty string")
+    logger.info(f"Loading model from {model_path}")
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
     trainer_config = {
-        "model_path": config.get("model_path"),
+        "model_path": model_path,
         "learning_rate": config.get("learning_rate", 1e-5),
         "batch_size": config.get("batch_size", 1),
         "gradient_accumulation_steps": config.get("gradient_accumulation_steps", 4),

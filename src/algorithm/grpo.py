@@ -3,26 +3,29 @@ import logging
 import asyncio
 from typing import Any, Dict, List, Optional
 from src.core.types import Triplet, Rollout, Span
-from src.store.memory import InMemoryStore
+from src.store.memory import InMemoryLightningStore
 from src.trainer import RLTrainer
 from src.core.adapter import TraceToTripletAdapter
 
 logger = logging.getLogger(__name__)
 
 class BaseAlgorithm:
-    def __init__(self, store: InMemoryStore):
+    def __init__(self, store: InMemoryLightningStore):
         self.store = store
 
     async def run(self):
         raise NotImplementedError()
 
 class GRPOAlgorithm(BaseAlgorithm):
-    def __init__(self, store: InMemoryStore, trainer_config: Dict[str, Any], tokenizer: Any):
+    def __init__(self, store: InMemoryLightningStore, trainer_config: Dict[str, Any], tokenizer: Any):
         super().__init__(store)
         self.trainer = RLTrainer(trainer_config)
         self.tokenizer = tokenizer
         self.adapter = TraceToTripletAdapter()
-        self.current_model_path = trainer_config.get("model_path")
+        model_path = trainer_config.get("model_path")
+        if not isinstance(model_path, str) or not model_path:
+            raise ValueError("trainer_config.model_path must be a non-empty string")
+        self.current_model_path = model_path
 
     def _tokenize_triplet(self, triplet: Triplet) -> Dict[str, Any]:
         prompt_text = self.tokenizer.apply_chat_template(triplet.prompt, tokenize=False, add_generation_prompt=True)
