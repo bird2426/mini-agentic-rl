@@ -5,7 +5,7 @@ import time
 
 # Core Status Types
 RolloutStatus = Literal["queuing", "preparing", "running", "failed", "succeeded", "cancelled"]
-AttemptStatus = Literal["preparing", "running", "failed", "succeeded", "timeout"]
+AttemptStatus = Literal["preparing", "running", "failed", "succeeded", "timeout", "cancelled"]
 RolloutMode = Literal["train", "val", "test"]
 
 class Span(BaseModel):
@@ -17,10 +17,11 @@ class Span(BaseModel):
     start_time: float
     end_time: Optional[float] = None
     attributes: Dict[str, Any] = Field(default_factory=dict)
-    
+
     # Metadata for store coordination
     rollout_id: str
     attempt_id: str
+    sequence_id: Optional[int] = None
 
 class Triplet(BaseModel):
     """The standard training unit in agent-lighting."""
@@ -51,12 +52,18 @@ class Rollout(BaseModel):
     status: RolloutStatus = "queuing"
     config: RolloutConfig = Field(default_factory=RolloutConfig)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    resources_id: Optional[str] = None
 
 class AttemptedRollout(Rollout):
     attempt: Attempt
 
-class NamedResources(BaseModel):
-    """Container for models, tokenizers, etc."""
+class ResourcesUpdate(BaseModel):
+    """Immutable snapshot for models, tokenizers, etc."""
     resources: Dict[str, Any]
     resources_id: str
     timestamp: float = Field(default_factory=time.time)
+
+
+class NamedResources(ResourcesUpdate):
+    """Alias for backward compatibility."""
+    pass
