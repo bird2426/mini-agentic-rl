@@ -1,6 +1,6 @@
 # Mini Agentic RL
 
-Minimal Agentic RL framework for Mac (MPS) training. Follows agent-lighting architecture.
+Cross-platform Agentic RL framework. Works on Mac (MPS), GPU (CUDA), and CPU.
 
 ## Quick Start
 
@@ -17,6 +17,16 @@ python scripts/train.py --config scripts/configs/sft_gsm8k.yaml
 python scripts/train.py --config scripts/configs/grpo_gsm8k.yaml
 ```
 
+## Cross-Platform Support
+
+Configure device in YAML:
+```yaml
+device: auto    # Auto-detect (mps/cuda/cpu)
+device: mps      # Mac Apple Silicon
+device: cuda    # NVIDIA GPU
+device: cpu     # CPU fallback
+```
+
 ## Project Structure
 
 ```
@@ -30,7 +40,7 @@ src/
 ├── agents/gsm8k_lit.py   # GSM8K Agent (LitAgent pattern)
 ├── algorithm/grpo.py      # GRPO algorithm
 ├── core/                  # Span, Triplet, Rollout types
-├── datasets/gsm8k.py     # GSM8K dataset loader
+├── datasets/gsm8k.py    # GSM8K dataset loader
 ├── rollout/hf_server.py   # HuggingFace inference server
 ├── runner/agent_runner.py # Async rollout worker
 ├── store/memory.py        # InMemory state store
@@ -39,11 +49,11 @@ src/
 
 ## Features
 
-- MPS/CPU training support
-- GSM8K math reasoning dataset
-- GRPO RL training
-- YAML-based configuration
-- Async rollout processing
+- **Cross-Platform**: Mac (MPS), GPU (CUDA), CPU
+- **GRPO Training**: Group Relative Policy Optimization
+- **Async Rollout**: Parallel trajectory collection
+- **YAML Config**: Reproducible experiments
+- **LoRA Support**: Memory-efficient fine-tuning
 
 ## License
 
