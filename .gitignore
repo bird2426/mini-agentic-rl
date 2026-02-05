@@ -24,3 +24,5 @@ test_buffer/
 *.log
 tmp/
 .DS_Store
+*.yaml
+!configs/*.yaml

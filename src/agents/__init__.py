@@ -1,7 +1,3 @@
-"""
-Agents 模块
-"""
-from .base import BaseAgent
-from .gsm8k_agent import GSM8KAgent
+from .gsm8k_lit import GSM8KLitAgent
 
-__all__ = ["BaseAgent", "GSM8KAgent"]
+__all__ = ["GSM8KLitAgent"]

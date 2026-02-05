@@ -4,6 +4,7 @@ RL 训练器 (HuggingFace)
 """
 import torch
 import torch.nn as nn
+import logging
 from typing import List, Dict, Any
 from transformers import (
     AutoModelForCausalLM, 
@@ -11,6 +12,8 @@ from transformers import (
     BitsAndBytesConfig
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+
+logger = logging.getLogger(__name__)
 
 
 class HFRLTrainer:
@@ -34,25 +37,46 @@ class HFRLTrainer:
         """加载模型"""
         print(f"📦 加载模型: {model_path}")
         
-        # 4-bit 量化配置
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-        )
-        
+        # 自动选择设备
+        if torch.cuda.is_available():
+            device = "cuda"
+            compute_dtype = torch.float16
+            load_in_4bit = True
+        elif torch.backends.mps.is_available():
+            device = "mps"
+            compute_dtype = torch.float16
+            load_in_4bit = False # bitsandbytes 不支持 MPS
+        else:
+            device = "cpu"
+            compute_dtype = torch.float32
+            load_in_4bit = False
+
         # 加载模型
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            quantization_config=bnb_config,
-            device_map="auto",
-            trust_remote_code=True
-        )
+        if load_in_4bit:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=compute_dtype,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                quantization_config=bnb_config,
+                device_map="auto",
+                trust_remote_code=True
+            )
+        else:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                torch_dtype=compute_dtype,
+                device_map=None,
+                trust_remote_code=True
+            ).to(device)
         
         if use_lora:
-            self.model.gradient_checkpointing_enable()
-            self.model = prepare_model_for_kbit_training(self.model)
+            if load_in_4bit:
+                self.model.gradient_checkpointing_enable()
+                self.model = prepare_model_for_kbit_training(self.model)
             
             lora_config = LoraConfig(
                 r=self.config.get("lora_r", 8),
@@ -74,7 +98,7 @@ class HFRLTrainer:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
         print("✅ 模型加载完成")
-    
+
     def train(
         self, 
         trajectories: List[Dict[str, Any]], 
@@ -98,16 +122,25 @@ class HFRLTrainer:
         print(f"   训练轮数: {num_epochs}")
         
         if self.optimizer is None:
-            # 使用 8-bit AdamW 节省显存
-            import bitsandbytes as bnb
-            self.optimizer = bnb.optim.AdamW8bit(
-                self.model.parameters(),
-                lr=self.config.get("learning_rate", 1e-5)
-            )
+            if torch.cuda.is_available():
+                import bitsandbytes as bnb
+                self.optimizer = bnb.optim.AdamW8bit(
+                    self.model.parameters(),
+                    lr=self.config.get("learning_rate", 1e-5)
+                )
+            else:
+                self.optimizer = torch.optim.AdamW(
+                    self.model.parameters(),
+                    lr=self.config.get("learning_rate", 1e-5)
+                )
         
         batch_size = self.config.get("batch_size", 1)
         grad_accum_steps = self.config.get("gradient_accumulation_steps", 4)
         
+        if len(trajectories) == 0:
+            print("⚠️ 没有轨迹可训练，跳过训练")
+            return
+
         for epoch in range(num_epochs):
             print(f"\n=== Epoch {epoch + 1}/{num_epochs} ===")
             
@@ -116,7 +149,9 @@ class HFRLTrainer:
             
             for i in range(0, len(trajectories), batch_size):
                 batch = trajectories[i:i + batch_size]
-                
+                if len(batch) == 0:
+                    continue
+                    
                 # 准备数据
                 batch_tokens, batch_masks, batch_rewards = self._prepare_batch(batch)
                 
@@ -136,7 +171,8 @@ class HFRLTrainer:
                 if (i // batch_size + 1) % grad_accum_steps == 0:
                     self.optimizer.step()
                     self.optimizer.zero_grad()
-                    torch.cuda.empty_cache()  # 清理显存避免碎片化
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                 
                 epoch_loss += loss.item() * grad_accum_steps
                 num_batches += 1
@@ -145,8 +181,11 @@ class HFRLTrainer:
                     avg_loss = epoch_loss / num_batches
                     print(f"  Batch {num_batches}, Loss: {avg_loss:.4f}")
             
-            avg_epoch_loss = epoch_loss / num_batches
-            print(f"  Epoch {epoch + 1} 平均 Loss: {avg_epoch_loss:.4f}")
+            if num_batches > 0:
+                avg_epoch_loss = epoch_loss / num_batches
+                print(f"  Epoch {epoch + 1} 平均 Loss: {avg_epoch_loss:.4f}")
+            else:
+                print(f"  Epoch {epoch + 1} 没有有效批次")
     
     def _prepare_batch(self, batch: List[Dict]) -> tuple:
         """准备 RL 批次数据"""
@@ -155,12 +194,12 @@ class HFRLTrainer:
         
         batch_tokens = []
         batch_masks = []
-        batch_rewards = []
+        batch_advantages = [] # 改为使用 advantage
         
         for traj in batch:
             tokens = traj["tokens"]
             mask = traj["loss_mask"]
-            reward = traj["reward"]
+            advantage = traj.get("advantage", 0.0) # 使用 pre-computed advantage
             
             # Truncate
             if len(tokens) > max_len:
@@ -174,22 +213,21 @@ class HFRLTrainer:
             
             batch_tokens.append(tokens_padded)
             batch_masks.append(mask_padded)
-            batch_rewards.append(reward)
+            batch_advantages.append(advantage)
         
         # 转为 tensor
         tokens_tensor = torch.tensor(batch_tokens, dtype=torch.long)
         masks_tensor = torch.tensor(batch_masks, dtype=torch.float32)
-        rewards_tensor = torch.tensor(batch_rewards, dtype=torch.float32)
+        advantages_tensor = torch.tensor(batch_advantages, dtype=torch.float32)
         
-        return tokens_tensor, masks_tensor, rewards_tensor
-    
-    
+        return tokens_tensor, masks_tensor, advantages_tensor
+
     def _compute_loss_with_mask(
         self,
         tokens: torch.Tensor,
         loss_masks: torch.Tensor,
-        rewards: torch.Tensor,
-        trajectories: List[Dict]  # 新增
+        advantages: torch.Tensor, # 改名为 advantages
+        trajectories: List[Dict]
     ) -> torch.Tensor:
         """
         计算应用 loss-mask 的 RL 损失
@@ -203,51 +241,46 @@ class HFRLTrainer:
         device = next(self.model.parameters()).device
         tokens = tokens.to(device)
         loss_masks = loss_masks.to(device)
-        rewards = rewards.to(device)
+        advantages = advantages.to(device)
         
         # 前向传播
-        # tokens 已经通过 _prepare_batch 进行了 max_length 限制和 padding
         outputs = self.model(
             input_ids=tokens[:, :-1],
             labels=tokens[:, 1:],
             use_cache=False
         )
-        
+
         # 计算 per-token loss
         logits = outputs.logits
         vocab_size = logits.size(-1)
-        
+
         shift_labels = tokens[:, 1:].contiguous()
         shift_masks = loss_masks[:, 1:].contiguous()
-        
+
         loss_fct = nn.CrossEntropyLoss(reduction='none')
         token_loss = loss_fct(
             logits.view(-1, vocab_size),
             shift_labels.view(-1)
         ).view_as(shift_labels)
-        
+
         # 应用 mask
         masked_loss = token_loss * shift_masks
-        
+
         # 每个样本的平均 loss
         per_sample_loss = (
-            masked_loss.sum(dim=1) / 
+            masked_loss.sum(dim=1) /
             shift_masks.sum(dim=1).clamp_min(1)
         )
-        
+
+        # Guard against NaN per_sample_loss
+        if torch.isnan(per_sample_loss).any():
+            logger.warning("[Trainer] NaN detected in per_sample_loss, replacing with 0")
+            per_sample_loss = torch.where(torch.isnan(per_sample_loss), torch.zeros_like(per_sample_loss), per_sample_loss)
+
         # Advantage-weighted
-        advantages = self._compute_advantages(rewards)
         weighted_loss = (per_sample_loss * advantages).mean()
         
         return weighted_loss
-    
-    def _compute_advantages(self, rewards: torch.Tensor) -> torch.Tensor:
-        """计算优势函数"""
-        if len(rewards) == 1:
-            return torch.ones_like(rewards)
-        
-        advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
-        return advantages
     
     def save_model(self, output_dir: str):
         """保存模型"""
@@ -263,3 +296,6 @@ class HFRLTrainer:
         self.model = None
         torch.cuda.empty_cache()
         print("✅ 显存已释放")
+
+# Alias for compatibility
+RLTrainer = HFRLTrainer
