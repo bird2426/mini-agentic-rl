@@ -1,84 +1,49 @@
 # Mini Agentic RL
 
-最小化实现的 Agentic RL 框架，用于训练具有工具调用能力的语言模型。
+Minimal Agentic RL framework for Mac (MPS) training. Follows agent-lighting architecture.
 
-## 特性
-
-- ✅ **简洁架构**: Agent 内置工具，无过度抽象
-- ✅ **HuggingFace 生态**: 基于 transformers + PEFT
-- ✅ **GRPO 训练**: Group Relative Policy Optimization
-- ✅ **低显存友好**: 支持 4GB 显存训练（4-bit + LoRA）
-- ✅ **模块化设计**: Agent、Dataset、Rollout、Trainer 解耦
-
-## 快速开始
-
-### 安装
+## Quick Start
 
 ```bash
+# Install
 conda create -n mini-agentic-rl python=3.10
 conda activate mini-agentic-rl
 pip install -r requirements.txt
+
+# SFT Training
+python scripts/train.py --config scripts/configs/sft_gsm8k.yaml
+
+# GRPO Training
+python scripts/train.py --config scripts/configs/grpo_gsm8k.yaml
 ```
 
-### 训练流程
-
-**1. SFT 训练**
-```bash
-python scripts/train_sft.py \
-    --model_path Qwen/Qwen2.5-0.5B \
-    --dataset gsm8k \
-    --num_epochs 3 \
-    --output_dir ./outputs/Qwen2.5-0.5B/sft
-```
-
-**2. RL 训练**
-```bash
-python scripts/train_gsm8k_agent.py \
-    --model_path ./outputs/Qwen2.5-0.5B/sft \
-    --dataset gsm8k \
-    --samples_per_prompt 4 \
-    --max_new_tokens 256 \
-    --total_epochs 3 \
-    --output_dir ./outputs/Qwen2.5-0.5B/rl
-```
-
-**3. 交互测试**
-```bash
-python scripts/test_interactive.py \
-    --model_path ./outputs/Qwen2.5-0.5B/rl/epoch_3
-```
-
-## 架构
+## Project Structure
 
 ```
+scripts/
+├── train.py              # Unified training script (SFT + GRPO)
+└── configs/
+    ├── sft_gsm8k.yaml   # SFT config
+    └── grpo_gsm8k.yaml  # GRPO config
+
 src/
-├── agents/          # Agent 实现（内置工具）
-├── datasets/        # 数据集加载
-├── rollout/         # Rollout 管理（生成轨迹）
-├── trainer/         # 训练器（SFT + RL）
-└── utils/           # 工具函数
+├── agents/gsm8k_lit.py   # GSM8K Agent (LitAgent pattern)
+├── algorithm/grpo.py      # GRPO algorithm
+├── core/                  # Span, Triplet, Rollout types
+├── datasets/gsm8k.py     # GSM8K dataset loader
+├── rollout/hf_server.py   # HuggingFace inference server
+├── runner/agent_runner.py # Async rollout worker
+├── store/memory.py        # InMemory state store
+└── trainer/hf_trainer.py  # HuggingFace trainer with LoRA
 ```
 
-## 参数说明
+## Features
 
-### SFT 训练
-- `--model_path`: 基础模型路径
-- `--num_epochs`: 训练轮数
-- `--batch_size`: 批次大小（显存限制）
-- `--gradient_accumulation_steps`: 梯度累积
-
-### RL 训练
-- `--model_path`: SFT 模型路径
-- `--samples_per_prompt`: GRPO 采样次数（每个问题采样几次）
-- `--max_new_tokens`: 生成长度限制（控制推理速度）
-- `--total_epochs`: RL 迭代次数（每轮: Rollout → Training）
-- `--batch_size`: 批次大小
-- `--gradient_accumulation_steps`: 梯度累积
-
-### 交互测试
-- `--model_path`: 模型路径
-- `--max_new_tokens`: 最大生成长度
-- `--temperature`: 温度参数
+- MPS/CPU training support
+- GSM8K math reasoning dataset
+- GRPO RL training
+- YAML-based configuration
+- Async rollout processing
 
 ## License
 
