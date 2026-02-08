@@ -1,12 +1,16 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable
 
 from .base import Adapter
 from ..types import Triplet
-from ..reward import score_gsm8k_response
 
 
 class TraceAdapter(Adapter):
-    def __init__(self, require_tool_call: bool = False):
+    def __init__(
+        self,
+        reward_fn: Callable[[str, str, bool], float],
+        require_tool_call: bool = False,
+    ):
+        self.reward_fn = reward_fn
         self.require_tool_call = require_tool_call
 
     def adapt(self, spans: List[Dict[str, object]]) -> List[Triplet]:
@@ -23,10 +27,11 @@ class TraceAdapter(Adapter):
             response = str(payload["response"])
             ground_truth = str(payload["ground_truth"])
 
-            reward = score_gsm8k_response(
-                response=response,
-                ground_truth=ground_truth,
-                require_tool_call=self.require_tool_call,
+            # Use the injected reward function
+            reward = self.reward_fn(
+                response,
+                ground_truth,
+                self.require_tool_call,
             )
 
             triplets.append(

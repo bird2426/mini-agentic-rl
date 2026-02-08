@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from datasets import load_dataset
-
-from ..reward import normalize_numeric
+from ..agent.gsm8k_domain import normalize_numeric
 
 
 @dataclass

@@ -11,6 +11,7 @@ from .types import AlgorithmMetrics
 from .store.memory import InMemoryStore
 from .runner.local import LocalRunner
 from .agent.gsm8k import GSM8KAgent
+from .agent.gsm8k_domain import score_gsm8k_response
 from .adapter.trace import TraceAdapter
 from .algorithm.grpo import LocalGRPOAlgorithm
 
@@ -36,19 +37,27 @@ class Trainer:
         self.model_config = model_config
         self.grpo_config = grpo_config
 
+        # Hub: Store
         self.store = InMemoryStore()
 
-        self.adapter = TraceAdapter(require_tool_call=require_tool_call)
+        # Spoke: Algorithm (connected to Policy and Adapter)
+        # We inject the domain-specific reward function here
+        self.adapter = TraceAdapter(
+            reward_fn=score_gsm8k_response, require_tool_call=require_tool_call
+        )
         self.algorithm = LocalGRPOAlgorithm(policy=self.policy, adapter=self.adapter)
 
+        # Initial resources
         self.store.add_resources({"policy": self.policy})
 
+        # Spoke: Agent
         self.agent = GSM8KAgent(
             model=self.policy.model,
             tokenizer=self.policy.tokenizer,
             model_config=self.model_config,
         )
 
+        # Spoke: Runner (connects Store and Agent)
         self.runner = LocalRunner(store=self.store, agent=self.agent)
 
     def train_epoch(self, epoch: int, samples: List[GSM8KSample]) -> EpochMetrics:
@@ -90,6 +99,7 @@ class Trainer:
         )
 
     def evaluate_exact_match(self, samples: List[GSM8KSample]) -> float:
+        # Isolated evaluation environment
         eval_store = InMemoryStore()
         eval_store.add_resources({"policy": self.policy})
 
@@ -100,8 +110,11 @@ class Trainer:
         )
 
         eval_runner = LocalRunner(store=eval_store, agent=eval_agent)
-        adapter = TraceAdapter(require_tool_call=False)
 
+        # Wire evaluation adapter with the same reward function
+        adapter = TraceAdapter(reward_fn=score_gsm8k_response, require_tool_call=False)
+
+        # Enqueue evaluation tasks
         for sample in samples:
             eval_store.enqueue_rollout(
                 {
