@@ -1,84 +1,84 @@
 # Mini Agentic RL
 
-最小化实现的 Agentic RL 框架，用于训练具有工具调用能力的语言模型。
+Agent-Lightning-inspired mini framework for GSM8K RL training on a single machine.
 
-## 特性
+## Features
 
-- ✅ **简洁架构**: Agent 内置工具，无过度抽象
-- ✅ **HuggingFace 生态**: 基于 transformers + PEFT
-- ✅ **GRPO 训练**: Group Relative Policy Optimization
-- ✅ **低显存友好**: 支持 4GB 显存训练（4-bit + LoRA）
-- ✅ **模块化设计**: Agent、Dataset、Rollout、Trainer 解耦
+- decoupled pipeline: rollout collection, rewarding, optimization, evaluation
+- GRPO-style grouped sampling with advantage normalization
+- HF + PEFT + 4-bit quantization defaults for limited VRAM
+- standalone train/eval/interactive scripts
 
 ## 快速开始
 
-### 安装
+### Install
 
 ```bash
-conda create -n mini-agentic-rl python=3.10
+conda env create -f environment.yml
 conda activate mini-agentic-rl
-pip install -r requirements.txt
 ```
 
-### 训练流程
+### Training Flow
 
-**1. SFT 训练**
+**1) Optional SFT warm start**
 ```bash
-python scripts/train_sft.py \
+python scripts/preprocess/train_sft.py \
     --model_path Qwen/Qwen2.5-0.5B \
-    --dataset gsm8k \
-    --num_epochs 3 \
+    --num_epochs 2 \
     --output_dir ./outputs/Qwen2.5-0.5B/sft
 ```
 
-**2. RL 训练**
+**2) RL training**
 ```bash
 python scripts/train_gsm8k_agent.py \
     --model_path ./outputs/Qwen2.5-0.5B/sft \
-    --dataset gsm8k \
     --samples_per_prompt 4 \
-    --max_new_tokens 256 \
-    --total_epochs 3 \
-    --output_dir ./outputs/Qwen2.5-0.5B/rl
+    --total_epochs 2 \
+    --max_train_samples 512 \
+    --max_eval_samples 128 \
+    --output_dir ./outputs/mini_gsm8k_rl
 ```
 
-**3. 交互测试**
+**3) Evaluate**
+```bash
+python scripts/eval_gsm8k.py \
+    --model_path ./outputs/mini_gsm8k_rl/best \
+    --split test \
+    --max_samples 200
+```
+
+**4) Interactive test**
 ```bash
 python scripts/test_interactive.py \
-    --model_path ./outputs/Qwen2.5-0.5B/rl/epoch_3
+    --model_path ./outputs/mini_gsm8k_rl/best
 ```
 
-## 架构
+## Architecture
 
 ```
 src/
-├── agents/          # Agent 实现（内置工具）
-├── datasets/        # 数据集加载
-├── rollout/         # Rollout 管理（生成轨迹）
-├── trainer/         # 训练器（SFT + RL）
-└── utils/           # 工具函数
+├── mini_rl/
+│   ├── store.py       # rollout queue + attempts + spans + resources
+│   ├── agent.py       # rollout execution logic
+│   ├── runner.py      # worker loop
+│   ├── adapter.py     # spans -> triplets
+│   ├── algorithm.py   # triplets -> optimization
+│   ├── trainer.py     # orchestration
+│   ├── backend/       # HF backends (RL/SFT)
+│   ├── data/          # gsm8k loading
+│   ├── model/         # policy wrapper
+│   ├── rl/            # grpo math
+│   ├── reward.py      # reward + answer extraction
+│   └── pipeline.py    # prompt + generation path
+
+scripts/
+├── preprocess/train_sft.py
+├── train_gsm8k_agent.py
+├── eval_gsm8k.py
+└── test_interactive.py
 ```
 
-## 参数说明
-
-### SFT 训练
-- `--model_path`: 基础模型路径
-- `--num_epochs`: 训练轮数
-- `--batch_size`: 批次大小（显存限制）
-- `--gradient_accumulation_steps`: 梯度累积
-
-### RL 训练
-- `--model_path`: SFT 模型路径
-- `--samples_per_prompt`: GRPO 采样次数（每个问题采样几次）
-- `--max_new_tokens`: 生成长度限制（控制推理速度）
-- `--total_epochs`: RL 迭代次数（每轮: Rollout → Training）
-- `--batch_size`: 批次大小
-- `--gradient_accumulation_steps`: 梯度累积
-
-### 交互测试
-- `--model_path`: 模型路径
-- `--max_new_tokens`: 最大生成长度
-- `--temperature`: 温度参数
+See `docs/mini-agent-lightning-architecture.md` for detailed design.
 
 ## License
 

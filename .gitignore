@@ -19,8 +19,10 @@ pip-delete-this-directory.txt
 
 # Project specific
 outputs/
+models/
 _reference/
 test_buffer/
 *.log
 tmp/
 .DS_Store
+.ruff_cache/
